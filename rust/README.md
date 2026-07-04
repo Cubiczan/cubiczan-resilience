@@ -20,8 +20,10 @@ schedule and had **no jitter**; this crate adds full jitter and a backoff cap.
 | `with_timeout(fut, dur)` | tokio timeout wrapper → typed `ResilienceError::Timeout` |
 | `crdb_retry(op)` | CockroachDB serializable retry; retries **only** on SQLSTATE `40001`, capped backoff + jitter |
 | `IdempotencyLedger` / `FileLedger` | JSONL-backed `contains(key)` / `record(key)` guard for money/state ops |
+| `AuditLedger` / `verify_ledger` | signed, append-only JSONL audit ledger; HMAC-SHA256 over canonical JSON **+ the prior signature**, chaining lines so tampering is detectable |
 
-Minimal deps: `tokio`, `rand`, `thiserror`, `serde`/`serde_json`. No network deps.
+Minimal deps: `tokio`, `rand`, `thiserror`, `serde`/`serde_json`, plus
+`hmac`/`sha2`/`hex` for the audit ledger. No network deps.
 
 ## Add it
 
@@ -95,6 +97,36 @@ charge_card(amount)?;          // the side effect
 ledger.record(&key)?;          // mark done so retries are blocked
 ```
 
+### Audit ledger (signed, append-only, tamper-evident)
+
+```rust
+use resilient_call::{AuditLedger, AuditRecordInput, verify_ledger};
+
+let ledger = AuditLedger::open(".state/audit.jsonl", None)?; // key from AUDIT_LEDGER_KEY
+let _sig = ledger.append(AuditRecordInput {
+    event: "approve_payout".into(),
+    actor: "cfo-agent".into(),
+    inputs: Some(serde_json::json!({ "amount": 1000 })),
+    sources: Some(serde_json::json!(["invoice:inv-42"])),
+    confidence: Some(0.97),
+    rationale: Some("within policy limit".into()),
+    ..Default::default()
+})?;
+
+// Each record's sig = HMAC-SHA256(key, canonical_json(record + prev_sig)),
+// so lines form a hash chain. verify() re-walks and flags the first bad line.
+match ledger.verify()? {
+    r if r.is_ok() => { /* intact */ }
+    r => eprintln!("tampered at line {:?}", r.tampered_index()),
+}
+// Or without an instance: verify_ledger(path, Some(key))?.
+```
+
+The signing key resolves from the `open(_, key)` argument, then the
+`AUDIT_LEDGER_KEY` env var, then a documented insecure default meant for
+tests/dev only. See the [top-level README](../README.md#audit-ledger) for the
+full scheme shared across the TS / Python / Rust ports.
+
 ## Tests
 
 ```sh
@@ -105,7 +137,10 @@ cargo test
 Covered: retry succeeds after N transient failures; gives up after max
 attempts; terminal errors short-circuit; timeout fires (and passes fast
 successes through); `crdb_retry` retries on `40001` but not other SQLSTATEs;
-ledger blocks duplicate keys and persists across reopen.
+idempotency ledger blocks duplicate keys and persists across reopen; the audit
+ledger appends N records and verifies intact, chains each line to the prior
+signature, resumes the chain across reopen, and detects an edited payload, a
+deleted interior line, and a wrong key — each at the correct line index.
 
 ## License
 

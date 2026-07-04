@@ -10,6 +10,9 @@ Valiron advisory AI):
 - `IdempotencyStore` — protocol + in-memory and file-backed impls to guard
   money/state operations against double-execution on retry.
 - `atomic_write(path, data)` — write-to-temp + `os.replace`, never a partial file.
+- `AuditLedger` / `verify_ledger` — signed, append-only JSONL audit ledger with
+  HMAC-SHA256 signature chaining (see the [Audit Ledger](../README.md#audit-ledger)
+  section for the shared scheme).
 - FastAPI helpers — fail-closed `require_auth` bearer dependency and a
   `cors_allowlist` factory that forbids wildcard-origin + credentials.
 

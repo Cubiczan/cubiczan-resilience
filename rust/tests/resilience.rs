@@ -1,6 +1,6 @@
 use resilient_call::{
-    crdb_retry, retry, with_timeout, FileLedger, IdempotencyLedger, ResilienceError, RetryPolicy,
-    SqlError,
+    crdb_retry, retry, verify_ledger, with_timeout, AuditLedger, AuditRecordInput, FileLedger,
+    IdempotencyLedger, ResilienceError, RetryPolicy, SqlError,
 };
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -179,4 +179,165 @@ fn ledger_persists_across_reopen() {
     assert!(reopened.contains("mandate:m-2").unwrap());
     assert!(!reopened.contains("mandate:m-3").unwrap());
     assert_eq!(reopened.len().unwrap(), 2);
+}
+
+const AUDIT_KEY: &str = "test-key-0123456789";
+
+fn sample_record(i: u32) -> AuditRecordInput {
+    AuditRecordInput {
+        event: "decision".into(),
+        actor: "agent-1".into(),
+        inputs: Some(serde_json::json!({ "i": i })),
+        sources: Some(serde_json::json!(["src-a"])),
+        confidence: Some(0.9),
+        rationale: Some(format!("step {i}")),
+        ts: Some(format!("2026-01-01T00:00:0{i}Z")),
+    }
+}
+
+#[test]
+fn audit_append_n_records_and_verify_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let ledger = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+
+    for i in 0..5 {
+        ledger.append(sample_record(i)).unwrap();
+    }
+    let result = ledger.verify().unwrap();
+    assert!(result.is_ok());
+    assert_eq!(result, resilient_call::VerifyResult::Ok { count: 5 });
+}
+
+#[test]
+fn audit_records_chain_to_prior_signature() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let ledger = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+
+    let s0 = ledger.append(sample_record(0)).unwrap();
+    let s1 = ledger.append(sample_record(1)).unwrap();
+
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(lines[0]["prev_sig"], ""); // genesis
+    assert_eq!(lines[0]["sig"], s0);
+    assert_eq!(lines[1]["prev_sig"], s0); // links to prior sig
+    assert_eq!(lines[1]["sig"], s1);
+}
+
+#[test]
+fn audit_resumes_chain_across_instances() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    {
+        let l1 = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+        l1.append(sample_record(0)).unwrap();
+        l1.append(sample_record(1)).unwrap();
+    }
+    let l2 = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+    l2.append(sample_record(2)).unwrap();
+
+    let result = verify_ledger(&path, Some(AUDIT_KEY)).unwrap();
+    assert_eq!(result, resilient_call::VerifyResult::Ok { count: 3 });
+}
+
+#[test]
+fn audit_detects_edited_payload_at_right_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let ledger = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+    for i in 0..4 {
+        ledger.append(sample_record(i)).unwrap();
+    }
+
+    // Tamper line index 2's payload, leaving its sig untouched.
+    let mut lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    lines[2]["actor"] = serde_json::json!("attacker");
+    let rewritten: String = lines
+        .iter()
+        .map(|l| serde_json::to_string(l).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, rewritten + "\n").unwrap();
+
+    let result = verify_ledger(&path, Some(AUDIT_KEY)).unwrap();
+    assert!(!result.is_ok());
+    assert_eq!(result.tampered_index(), Some(2));
+}
+
+#[test]
+fn audit_detects_deleted_interior_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let ledger = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+    for i in 0..4 {
+        ledger.append(sample_record(i)).unwrap();
+    }
+
+    let mut lines: Vec<String> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    lines.remove(1); // drop line index 1
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let result = verify_ledger(&path, Some(AUDIT_KEY)).unwrap();
+    assert!(!result.is_ok());
+    // Former line 2 (now at index 1) has a prev_sig that no longer matches.
+    assert_eq!(result.tampered_index(), Some(1));
+}
+
+#[test]
+fn audit_fails_under_wrong_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let ledger = AuditLedger::open(&path, Some(AUDIT_KEY.to_string())).unwrap();
+    ledger.append(sample_record(0)).unwrap();
+
+    let result = verify_ledger(&path, Some("the-wrong-key")).unwrap();
+    assert!(!result.is_ok());
+    assert_eq!(result.tampered_index(), Some(0));
+}
+
+#[test]
+fn audit_verify_passes_on_absent_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("missing.jsonl");
+    let result = verify_ledger(&path, Some(AUDIT_KEY)).unwrap();
+    assert_eq!(result, resilient_call::VerifyResult::Ok { count: 0 });
+}
+
+/// Golden vector locking the wire format: this exact signature is also asserted
+/// by the TypeScript and Python ports, so the three implementations can never
+/// silently drift on canonicalization or the signing scheme.
+#[test]
+fn audit_cross_language_signature_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.jsonl");
+    let ledger = AuditLedger::open(&path, Some("k".to_string())).unwrap();
+    let sig = ledger
+        .append(AuditRecordInput {
+            event: "e".into(),
+            actor: "a".into(),
+            inputs: Some(serde_json::json!({ "x": 1 })),
+            sources: Some(serde_json::json!(["s"])),
+            confidence: None,
+            rationale: None,
+            ts: Some("2026-01-01T00:00:00Z".into()),
+        })
+        .unwrap();
+    assert_eq!(sig, "d379966f5be33822aa1091efa18034e67e679fbadb168bb73c3f42ef712a46fc");
 }

@@ -31,6 +31,7 @@ ESM + `.d.ts`.
 | `retry(fn, opts)` | exponential backoff + full jitter, composable |
 | `SlidingWindowRateLimiter` | in-memory sliding-window limiter |
 | `validateBoundary(schema, input)` | validate untrusted input via a Zod-compatible schema |
+| `AuditLedger` / `verifyLedger` | signed, append-only JSONL audit ledger with HMAC-SHA256 signature chaining (see the [Audit Ledger](../README.md#audit-ledger) section) |
 | `ResilienceError` / `isResilienceError` | typed error with `kind`, `attempts`, `status` |
 
 ---

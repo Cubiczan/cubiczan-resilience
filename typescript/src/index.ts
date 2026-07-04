@@ -33,3 +33,15 @@ export {
   tryValidateBoundary,
   type SafeParser,
 } from "./validate.js";
+
+export {
+  AuditLedger,
+  verifyLedger,
+  canonicalJson,
+  DEFAULT_AUDIT_LEDGER_KEY,
+  AUDIT_LEDGER_KEY_ENV,
+  type AuditRecord,
+  type AuditRecordInput,
+  type AuditLedgerOptions,
+  type VerifyResult,
+} from "./auditLedger.js";

@@ -37,6 +37,7 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0",
     "zod": "^3.23.0"

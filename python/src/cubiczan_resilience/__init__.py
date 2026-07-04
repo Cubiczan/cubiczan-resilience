@@ -7,6 +7,8 @@ Public API:
 * :class:`IdempotencyStore`, :class:`InMemoryIdempotencyStore`,
   :class:`FileIdempotencyStore`
 * :func:`atomic_write`
+* :class:`AuditLedger`, :func:`verify_ledger` — signed, append-only JSONL audit
+  ledger with HMAC-SHA256 signature chaining
 * :class:`RetryPolicy`, :class:`TimeoutExceeded`, :class:`RetriesExhausted`,
   ``DEFAULT_RETRYABLE_STATUS``
 
@@ -19,6 +21,14 @@ dependency-free.
 from __future__ import annotations
 
 from .atomic import atomic_write
+from .audit_ledger import (
+    AUDIT_LEDGER_KEY_ENV,
+    DEFAULT_AUDIT_LEDGER_KEY,
+    AuditLedger,
+    VerifyResult,
+    canonical_json,
+    verify_ledger,
+)
 from .circuit import CircuitBreaker, CircuitOpenError, CircuitState
 from .idempotency import (
     FileIdempotencyStore,
@@ -48,5 +58,11 @@ __all__ = [
     "InMemoryIdempotencyStore",
     "FileIdempotencyStore",
     "atomic_write",
+    "AuditLedger",
+    "VerifyResult",
+    "verify_ledger",
+    "canonical_json",
+    "AUDIT_LEDGER_KEY_ENV",
+    "DEFAULT_AUDIT_LEDGER_KEY",
     "__version__",
 ]

@@ -13,17 +13,26 @@
 //!   SQLSTATE `40001`, with capped backoff + jitter.
 //! - [`IdempotencyLedger`] + [`FileLedger`] — a JSONL-backed guard so retrying
 //!   callers never double-execute a money/state operation.
+//! - [`AuditLedger`] — a signed, append-only JSONL audit ledger. Each record is
+//!   HMAC-SHA256 signed over its canonical JSON **plus the previous record's
+//!   signature**, chaining lines together so the ledger is tamper-evident.
 //!
 //! These were lifted and generalized from proven patterns in
-//! `cross-harness-scaffolder` (CRDB retry), and `swarmfi-executor` /
-//! `cleanmandate` (idempotency ledger).
+//! `cross-harness-scaffolder` (CRDB retry), `swarmfi-executor` / `cleanmandate`
+//! (idempotency ledger), and the HMAC audit ledgers in `cleanmandate`,
+//! `swarmfi-executor`, `glacier-edge-arm`, and `compliance-as-code-agent`.
 
+mod audit;
 mod crdb;
 mod error;
 mod ledger;
 mod retry;
 mod timeout;
 
+pub use audit::{
+    verify_ledger, AuditError, AuditLedger, AuditRecord, AuditRecordInput, VerifyResult,
+    AUDIT_LEDGER_KEY_ENV, DEFAULT_AUDIT_LEDGER_KEY,
+};
 pub use crdb::{
     crdb_retry, crdb_retry_with_policy, default_crdb_policy, SqlError, SERIALIZATION_FAILURE,
 };
