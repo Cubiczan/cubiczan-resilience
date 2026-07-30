@@ -9,6 +9,8 @@ Public API:
 * :func:`atomic_write`
 * :class:`AuditLedger`, :func:`verify_ledger` — signed, append-only JSONL audit
   ledger with HMAC-SHA256 signature chaining
+* :func:`resolve_tiered` — three-tier live → cache → mock resolution with an
+  honest provenance badge (:class:`Cached`, :class:`TieredResult`)
 * :class:`RetryPolicy`, :class:`TimeoutExceeded`, :class:`RetriesExhausted`,
   ``DEFAULT_RETRYABLE_STATUS``
 
@@ -34,6 +36,14 @@ from .idempotency import (
     FileIdempotencyStore,
     IdempotencyStore,
     InMemoryIdempotencyStore,
+)
+from .tiered import (
+    MISS,
+    AllTiersFailed,
+    Cached,
+    TieredResult,
+    TierFailure,
+    resolve_tiered,
 )
 from .retry import (
     DEFAULT_RETRYABLE_STATUS,
@@ -64,5 +74,11 @@ __all__ = [
     "canonical_json",
     "AUDIT_LEDGER_KEY_ENV",
     "DEFAULT_AUDIT_LEDGER_KEY",
+    "resolve_tiered",
+    "TieredResult",
+    "TierFailure",
+    "Cached",
+    "AllTiersFailed",
+    "MISS",
     "__version__",
 ]

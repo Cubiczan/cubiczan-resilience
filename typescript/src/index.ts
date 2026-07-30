@@ -45,3 +45,13 @@ export {
   type AuditLedgerOptions,
   type VerifyResult,
 } from "./auditLedger.js";
+
+export {
+  resolveTiered,
+  AllTiersFailedError,
+  type SourceTier,
+  type TieredResult,
+  type TierFailure,
+  type CachedValue,
+  type TieredSourceOptions,
+} from "./tieredSource.js";

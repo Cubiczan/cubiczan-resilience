@@ -6,12 +6,41 @@ with no timeout/retry/backoff, and money/state operations with no idempotency.
 
 | Package | Language | Provides |
 |---|---|---|
-| `typescript/` | TypeScript | `safeFetch()` (timeout + retry/backoff + SSRF allowlist), `requireAuth()` (fail-closed bearer + in-memory rate limit) |
-| `python/`     | Python (pip: `cubiczan-resilience`) | `@resilient` (timeout + backoff-with-jitter + circuit breaker), idempotency key store, atomic file write, FastAPI auth dependency + CORS allowlist factory |
+| `typescript/` | TypeScript | `safeFetch()` (timeout + retry/backoff + SSRF allowlist), `requireAuth()` (fail-closed bearer + in-memory rate limit), `resolveTiered()` (live → cache → mock with honest badge) |
+| `python/`     | Python (pip: `cubiczan-resilience`) | `@resilient` (timeout + backoff-with-jitter + circuit breaker), idempotency key store, atomic file write, FastAPI auth dependency + CORS allowlist factory, `resolve_tiered()` |
 | `rust/`       | Rust crate `resilient-call` | timeout, backoff+jitter, CockroachDB serializable-retry (SQLSTATE 40001), idempotency ledger check |
 | `onchain/`    | TS + Python | bounded retry + gas/fee bump, nonce management, tx-success assertion, off-chain circuit breaker |
 
 Lifted and generalized from: `cfo-resilience-matrix`, `strata-aws-native`, `hermes-pi-factory-guardian`, `cross-harness-scaffolder`, `valiron-advisory-ai`, `agent-conductor`, `critmin-oracle`.
+
+## Three-Tier Data Resolution
+
+`resolveTiered()` (TS) / `resolve_tiered()` (Python) — the **live → cache → mock**
+ladder, generalized from nine repos that each reimplemented it: `market-radar`,
+`courtvision-ai`, `finance-cockpit`, `chainsight-ai`, `deltafin`, `decision-brief`,
+`medpsy-clinical-trial-agent`, and `metal-tokenization-traceability`.
+
+The point is the **honest badge**. A dashboard that silently shows mock data is worse
+than one showing nothing, because the reader cannot tell a real number from a
+placeholder. So there is no code path that returns a value without a tier:
+
+```ts
+const price = await resolveTiered({
+  live:  () => fetchSpotPrice("LME-CU"),
+  cache: () => readCache("LME-CU"),
+  maxCacheAge: 60_000,
+});
+render(price.value, { badge: price.badge, muted: price.degraded });
+// badge: "live" | "cache (stale, 3h)" | "mock data — not real"
+```
+
+- **Mock is opt-in.** Omit `mock` and exhausting live+cache throws `AllTiersFailedError`.
+  Fabricating a number is never the default.
+- **A cache hit is still degraded.** `stale` is set past `maxCacheAge`; `maxCacheAgeHard`
+  rejects a hit outright.
+- **`null`/`undefined` mean a miss; `0` and `""` do not.** Falsy-but-real cached values
+  survive. Pass `MISS` (Python) when a cached `None` is itself meaningful.
+- **Failures are collected, not swallowed** — every tier's error is on the result.
 
 ## Audit Ledger
 
